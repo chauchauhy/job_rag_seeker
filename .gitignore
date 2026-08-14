@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Environment
+.env
+
+# Third-party clones
+repo/
+
+# Generated outputs
+data/raw/
+results/
+
+# Qdrant embedded storage
+qdrant_storage/
+
+# OS
+.DS_Store
+Thumbs.db

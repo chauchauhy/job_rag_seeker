@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "job-seeker"
+version = "0.1.0"
+description = "Crawl JobsDB jobs, parse a resume PDF, and match the resume against jobs with vector search."
+requires-python = ">=3.12"
+dependencies = [
+    "python-dotenv>=1.0",
+    "pydantic>=2.0",
+    "markitdown>=0.1.0",
+    "selenium>=4.20",
+    "qdrant-client>=1.9",
+    "fastembed>=0.3",
+    "plotly>=5.20",
+    "openai"
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+job-seeker = "job_seeker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
