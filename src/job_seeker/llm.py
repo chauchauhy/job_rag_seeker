@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from job_seeker.config import settings
@@ -29,7 +30,53 @@ def find_opencode_binary() -> str:
     raise FileNotFoundError("Cannot locate the opencode executable. Add it to PATH.")
 
 
-OPENCODE_TIMEOUT_SECONDS = 120
+OPENCODE_TIMEOUT_SECONDS = int(os.getenv("OPENCODE_TIMEOUT_SECONDS", "120"))
+
+
+def _run_opencode(
+    prompt: str, model: str, timeout: int
+) -> subprocess.CompletedProcess:
+    """Invoke the opencode CLI, preferring a warm ``opencode serve`` server.
+
+    When ``OPENCODE_SERVER_URL`` is set, ``run --attach`` reuses a running
+    server (started once per container) instead of cold-starting a fresh CLI
+    on every call. Falls back to the direct subprocess if the server is
+    unreachable or errors.
+    """
+    binary = find_opencode_binary()
+    server_url = os.getenv("OPENCODE_SERVER_URL", "").strip()
+    if server_url:
+        try:
+            return subprocess.run(
+                [
+                    binary,
+                    "run",
+                    "--attach",
+                    server_url,
+                    "--format",
+                    "json",
+                    "-m",
+                    model,
+                ],
+                input=prompt,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+        except (subprocess.SubprocessError, OSError):
+            print(f"[llm] opencode serve unreachable at {server_url}; "
+                  "falling back to direct invocation.", file=sys.stderr)
+    return subprocess.run(
+        [binary, "run", "--format", "json", "-m", model],
+        input=prompt,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+    )
 
 
 def run_llm(prompt: str, model: str | None = None, timeout: int = OPENCODE_TIMEOUT_SECONDS) -> str:
@@ -43,15 +90,7 @@ def run_llm(prompt: str, model: str | None = None, timeout: int = OPENCODE_TIMEO
     """
     model = model or settings.opencode_model
     try:
-        completed = subprocess.run(
-            [find_opencode_binary(), "run", "--format", "json", "-m", model],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-        )
+        completed = _run_opencode(prompt, model, timeout)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
             f"opencode run timed out after {timeout}s "

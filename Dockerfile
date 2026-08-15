@@ -1,7 +1,11 @@
 FROM python:3.13.5-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    OPENCODE_SERVER_URL=http://127.0.0.1:4096 \
+    OPENCODE_TIMEOUT_SECONDS=300 \
+    OPENCODE_DISABLE_MODELS_FETCH=true \
+    OPENCODE_DISABLE_AUTOUPDATE=true
 
 WORKDIR /app
 
@@ -27,4 +31,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
 USER appuser
 
-CMD ["sh", "-c", "streamlit run src/job_seeker/dashboard.py --server.headless true --server.enableCORS false --server.address 0.0.0.0 --server.port ${PORT:-8501}"]
+CMD ["sh", "-c", "opencode serve --port 4096 --hostname 127.0.0.1 & exec streamlit run src/job_seeker/dashboard.py --server.headless true --server.enableCORS false --server.address 0.0.0.0 --server.port ${PORT:-8501}"]
