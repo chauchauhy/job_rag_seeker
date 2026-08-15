@@ -87,9 +87,9 @@ def _load_cv() -> ExtractedCV:
                 return load_cv(path)
             except Exception:
                 continue
-    st.error("No CV found. Run `job-seeker extract-resume --pdf <your_cv.pdf>`, "
-             "or upload a resume in the Profile & Jobs Manager tab.")
-    st.stop()
+    st.warning("No CV found. Upload a resume PDF in the Profile & Jobs Manager tab "
+               "(or run `job-seeker extract-resume --pdf <your_cv.pdf>` locally).")
+    return ExtractedCV(Candidate_Name="")
 
 
 def _clear_job_cache() -> None:
