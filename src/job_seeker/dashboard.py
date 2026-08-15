@@ -45,6 +45,14 @@ from job_seeker.advice import generate_actionable_advice
 from job_seeker.config import RAW_DIR, settings
 from job_seeker.crawler import load_existing_jobs, upsert_jobs
 from job_seeker.discovery_ui import render_discovery
+from job_seeker.market_skills import (
+    SALARY_BANDS,
+    SKILL_DICT_PATH,
+    candidate_gap,
+    extract_skills,
+    filter_jobs,
+    top_companies,
+)
 from job_seeker.models import ActionableAdvice, ExtractedCV
 from job_seeker.pipeline import evaluate_job_match, load_cv, retrieve_matching_jobs
 from job_seeker.resume import process_resume
@@ -438,16 +446,188 @@ def _render_job_manager() -> None:
                 st.error(f"Job add failed: {exc}")
 
 
+def _render_skill_chips(skills: list[dict], color: str, label: str) -> None:
+    """Render market skills as tag chips with their job counts."""
+    if not skills:
+        st.caption("None")
+        return
+    bubbles = "".join(
+        f'<span style="background:#1B2430;color:{color};border:1px solid {color};'
+        f'border-radius:12px;padding:3px 12px;margin:0 6px 6px 0;'
+        f'display:inline-block;font-size:0.9rem;">'
+        f"{skill} · {count} jobs</span>"
+        for skill, count in skills
+    )
+    st.markdown(
+        f"<div><span style='color:#8A94A6;font-size:0.85rem;'>{label}:</span>"
+        f"<div>{bubbles}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_market_skills(cv: ExtractedCV) -> None:
+    """Render the market-skills tab: what skill is hot in the crawled job market."""
+    st.title("Market Skills")
+    st.caption(
+        "Which skills are hot across crawled Analyst Programmer postings, based on "
+        "requirements text. Keywords live in `data/skills.json` — edit that file to "
+        "refresh the dictionary without touching code."
+    )
+
+    jobs = load_existing_jobs(settings.jobsdb_output_file)
+    if not jobs:
+        st.warning(
+            "No crawled jobs found. Run `job-seeker crawl` to fetch postings, "
+            "then refresh."
+        )
+        return
+
+    top_n = st.slider("Top skills to show", min_value=5, max_value=40, value=20, key="market_top_n")
+    locations = sorted({str(job.get("working_location") or "") for job in jobs if job.get("working_location")})
+    sel_locations = st.multiselect("Filter by working location", locations, key="market_location")
+    sel_bands = st.multiselect(
+        "Filter by salary band (per month)",
+        list(SALARY_BANDS),
+        key="market_salary_band",
+        help="Many listings omit salary and fall into the '—' band.",
+    )
+    filtered = filter_jobs(jobs, locations=sel_locations, salary_bands=sel_bands)
+    if not filtered:
+        st.info("No jobs match the current filters.")
+        return
+
+    rows = extract_skills(filtered)
+    if not rows:
+        st.info(
+            "No skills from the dictionary were found in these postings. "
+            "Add or refine keywords in `data/skills.json`."
+        )
+        return
+
+    total_jobs = len(filtered)
+    st.caption(f"{total_jobs} job(s) match the filters.")
+
+    top_rows = [r for r in rows if r["count"] > 0][:top_n]
+
+    st.subheader("Top skills by job count")
+    fig = go.Figure(
+        go.Bar(
+            x=[r["count"] for r in top_rows],
+            y=[r["skill"] for r in top_rows],
+            orientation="h",
+            marker_color="#00D4FF",
+            text=[str(r["count"]) for r in top_rows],
+            textposition="outside",
+        )
+    )
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E6EAF2"),
+        margin=dict(l=40, r=60, t=30, b=30),
+        height=max(320, 28 * len(top_rows)),
+        xaxis_title="Jobs mentioning skill",
+    )
+    st.plotly_chart(fig, width="stretch")
+
+    col_table, col_gap = st.columns([3, 2])
+    with col_table:
+        st.subheader("Skill table")
+        search = st.text_input("Filter skills", placeholder="e.g. Java", key="market_skill_search")
+        table_rows = [
+            {
+                "Skill": r["skill"],
+                "# Jobs": r["count"],
+                "% of jobs": f"{r['count'] / total_jobs * 100:.0f}%",
+            }
+            for r in rows
+            if not search or search.lower() in r["skill"].lower()
+        ]
+        st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+        st.subheader("Which jobs need a skill?")
+        selected_skill = st.selectbox("Select a skill", [r["skill"] for r in rows], key="market_drilldown")
+        selected = next(r for r in rows if r["skill"] == selected_skill)
+        by_id = {str(job.get("job_id") or ""): job for job in filtered}
+        for job_id in selected["job_ids"]:
+            job = by_id.get(job_id)
+            if not job:
+                continue
+            meta = " · ".join(
+                str(v)
+                for v in [
+                    job.get("working_location"),
+                    job.get("salary"),
+                    job.get("company"),
+                ]
+                if v
+            )
+            st.markdown(f"- **{job.get('company') or 'Unknown'}** — {meta or 'details unknown'}")
+            if job.get("job_url"):
+                st.markdown(f"  [:arrow_upper_right: Apply]({job.get('job_url')})")
+
+    with col_gap:
+        st.subheader("Your skills vs. the market")
+        gap = candidate_gap(cv.Hard_Skills, rows, top_n=top_n)
+        st.markdown("**In demand & you already have**")
+        _render_skill_chips(
+            [(r["skill"], r["count"]) for r in gap["matched"]],
+            color="#2ECC71",
+            label="matched",
+        )
+        st.markdown("**Hot skills you may lack**")
+        _render_skill_chips(
+            [(r["skill"], r["count"]) for r in gap["missing"]],
+            color="#F1C40F",
+            label="upskill targets",
+        )
+        st.caption("Comparison uses your CV's hard skills against the dictionary aliases.")
+
+    st.divider()
+    st.subheader("Top companies hiring")
+    companies = top_companies(filtered, top_n=10)
+    fig2 = go.Figure(
+        go.Bar(
+            x=[c["count"] for c in companies],
+            y=[c["company"] for c in companies],
+            orientation="h",
+            marker_color="#F1C40F",
+            text=[str(c["count"]) for c in companies],
+            textposition="outside",
+        )
+    )
+    fig2.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E6EAF2"),
+        margin=dict(l=40, r=60, t=30, b=30),
+        xaxis_title="Job postings",
+    )
+    st.plotly_chart(fig2, width="stretch")
+
+    with st.expander("Update the skill dictionary"):
+        st.markdown(
+            f"Skills are matched against keyword aliases in `{SKILL_DICT_PATH}`. "
+            "Add a canonical name as a key and a list of aliases as its value, "
+            "e.g. `\"Kotlin\": [\"kotlin\"]`. Compound terms win over shorter "
+            "ones, and each skill counts once per job."
+        )
+
+
 def main() -> None:
     cv = _load_cv()
 
-    tab_dashboard, tab_discovery, tab_manager = st.tabs(
-        ["Match Dashboard", "Job Discovery", "Profile & Jobs Manager"]
+    tab_dashboard, tab_discovery, tab_market, tab_manager = st.tabs(
+        ["Match Dashboard", "Job Discovery", "Market Skills", "Profile & Jobs Manager"]
     )
     with tab_discovery:
         render_discovery(get_cv=lambda: cv.model_dump())
     with tab_dashboard:
         _render_match_dashboard(cv)
+    with tab_market:
+        _render_market_skills(cv)
     with tab_manager:
         _render_cv_manager(cv)
         _render_job_manager()

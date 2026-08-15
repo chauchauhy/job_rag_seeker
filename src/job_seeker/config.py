@@ -48,7 +48,11 @@ class Settings:
         os.getenv("CV_PDF_STORAGE", "data/raw/uploaded_resume.pdf")
     )
 
-    qdrant_url: str = os.getenv("QDRANT_URL", "http://localhost:6333")
+    qdrant_url: str = os.getenv(
+        "QDRANT_URL",
+        os.getenv("ONLINE_QDRANT_ENDPOINT", "http://localhost:6333"),
+    )
+    qdrant_key: str = os.getenv("ONLINE_QDRANT_KEY", "")
     qdrant_path: Path | None = _optional_path(os.getenv("QDRANT_PATH"))
     qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "jobs_collection")
     qdrant_dense_vector_name: str = "colbert"

@@ -35,7 +35,10 @@ def get_client() -> QdrantClient:
             settings.qdrant_path.parent.mkdir(parents=True, exist_ok=True)
             _client = QdrantClient(path=str(settings.qdrant_path))
         else:
-            _client = QdrantClient(url=settings.qdrant_url)
+            _client = QdrantClient(
+                url=settings.qdrant_url,
+                api_key=settings.qdrant_key or None,
+            )
     return _client
 
 

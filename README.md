@@ -34,8 +34,8 @@ job_seeker/
 ├── data/raw/                  # crawled jobs + cv.json + mock_cv.json (gitignored)
 ├── results/                   # extracted resume markdown (gitignored)
 ├── repo/                      # third-party clones (gitignored)
-├── .env                       # local configuration (copy of .env.example)
-├── .env.example
+├── .env                       # local configuration (copy of .env.sample)
+├── .env.sample
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
@@ -55,7 +55,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Copy `.env.example` to `.env` and adjust values (especially `RESUME_PDF_PATH`). The opencode CLI must be on `PATH` for LLM extraction.
+Copy `.env.sample` to `.env` and adjust values (especially `RESUME_PDF_PATH`). The opencode CLI must be on `PATH` for LLM extraction.
 
 ## Usage
 
