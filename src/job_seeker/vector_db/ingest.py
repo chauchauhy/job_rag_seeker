@@ -1,6 +1,8 @@
 """Ingest crawled job listings into Qdrant as hybrid (dense + BM25) points."""
 
 import json
+import os
+import time
 import uuid
 from pathlib import Path
 
@@ -11,8 +13,9 @@ from job_seeker.vector_db.embeddings import embed_colbert_docs, embed_sparse
 from job_seeker.vector_db.qdrant import ensure_collection, get_client
 from job_seeker.vector_db.schema import build_chunks
 
-UPSERT_BATCH_SIZE = 100
+UPSERT_BATCH_SIZE = int(os.getenv("QDRANT_UPSERT_BATCH_SIZE", "10"))
 EMBED_BATCH_SIZE = 64
+BATCH_DELAY_SECONDS = float(os.getenv("QDRANT_BATCH_DELAY_SECONDS", "0.5"))
 
 
 def load_jobs(path: str | Path | None = None) -> list[dict]:
@@ -57,6 +60,24 @@ def build_points(jobs: list[dict], embed_batch_size: int = EMBED_BATCH_SIZE) -> 
     return points
 
 
+def _upsert_with_retry(
+    client,
+    collection: str,
+    points,
+    retries: int = 3,
+    delay: float = 2.0,
+) -> None:
+    """Upsert a batch, retrying on transient errors (e.g. slow cloud cluster)."""
+    for attempt in range(retries):
+        try:
+            client.upsert(collection_name=collection, points=points)
+            return
+        except Exception:
+            if attempt == retries - 1:
+                raise
+            time.sleep(delay)
+
+
 def ingest_jobs_list(
     jobs: list[dict],
     collection: str | None = None,
@@ -74,7 +95,8 @@ def ingest_jobs_list(
     points = build_points(jobs)
     client = get_client()
     for i in range(0, len(points), UPSERT_BATCH_SIZE):
-        client.upsert(collection_name=collection, points=points[i : i + UPSERT_BATCH_SIZE])
+        _upsert_with_retry(client, collection, points[i : i + UPSERT_BATCH_SIZE])
+        time.sleep(BATCH_DELAY_SECONDS)
     return len(points)
 
 

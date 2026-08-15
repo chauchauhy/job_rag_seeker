@@ -53,6 +53,7 @@ class Settings:
         os.getenv("ONLINE_QDRANT_ENDPOINT", "http://localhost:6333"),
     )
     qdrant_key: str = os.getenv("ONLINE_QDRANT_KEY", "")
+    qdrant_timeout: int = int(os.getenv("QDRANT_TIMEOUT", "120"))
     qdrant_path: Path | None = _optional_path(os.getenv("QDRANT_PATH"))
     qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "jobs_collection")
     qdrant_dense_vector_name: str = "colbert"
