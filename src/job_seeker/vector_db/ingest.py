@@ -11,7 +11,7 @@ from qdrant_client import models
 from job_seeker.config import settings
 from job_seeker.vector_db.embeddings import embed_colbert_docs, embed_sparse
 from job_seeker.vector_db.qdrant import ensure_collection, get_client
-from job_seeker.vector_db.schema import build_chunks
+from job_seeker.vector_db.schema import RAG_SECTIONS, build_chunks
 
 UPSERT_BATCH_SIZE = int(os.getenv("QDRANT_UPSERT_BATCH_SIZE", "10"))
 EMBED_BATCH_SIZE = 64
@@ -22,6 +22,53 @@ def load_jobs(path: str | Path | None = None) -> list[dict]:
     path = path or settings.jobsdb_output_file
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_jobs_dir(directory: str | Path | None = None) -> list[dict]:
+    """Load and merge all ``*.json`` files under a jobs directory.
+
+    Missing or empty directories yield ``[]`` so callers can degrade
+    gracefully. Files are sorted by name for deterministic ordering.
+    """
+    directory = Path(directory) if directory else settings.jobs_dir
+    if not directory.is_dir():
+        return []
+    jobs: list[dict] = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            jobs.extend(load_jobs(path))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return jobs
+
+
+def validate_jobs_data(data) -> tuple[list[dict], list[str]]:
+    """Validate uploaded jobs payload.
+
+    Returns ``(jobs, warnings)``. Raises ``ValueError`` with a friendly
+    message for structural problems; warnings flag items that would index
+    nothing (no Responsibilities/Requirements text).
+    """
+    if not isinstance(data, list):
+        raise ValueError("File must contain a JSON list of job objects.")
+    if not data:
+        raise ValueError("File contains no jobs.")
+    jobs: list[dict] = []
+    warnings: list[str] = []
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"Item #{i + 1} is not a JSON object.")
+        text = " ".join(
+            str(item.get(section) or "").strip() for section in RAG_SECTIONS
+        ).strip()
+        if not text:
+            label = item.get("job_id") or item.get("company") or f"#{i + 1}"
+            warnings.append(f"{label}: no Responsibilities/Requirements text, skipped")
+            continue
+        jobs.append(item)
+    if not jobs:
+        raise ValueError("None of the items have job text to index.")
+    return jobs, warnings
 
 
 def _point_id(chunk) -> str:
@@ -112,4 +159,20 @@ def ingest_jobs(
     jobs = load_jobs(path)
     if not jobs:
         raise ValueError(f"No jobs found in {path or settings.jobsdb_output_file}")
+    return ingest_jobs_list(jobs, collection=collection, recreate=recreate)
+
+
+def ingest_jobs_dir(
+    directory: str | Path | None = None,
+    recreate: bool = False,
+    collection: str | None = None,
+) -> int:
+    """Chunk, embed, and upsert all ``*.json`` job files under a directory.
+
+    With ``recreate=True`` the collection is rebuilt from scratch using only
+    the files present in the directory. Returns the number of points written.
+    """
+    jobs = load_jobs_dir(directory)
+    if not jobs:
+        raise ValueError(f"No jobs found in {directory or settings.jobs_dir}")
     return ingest_jobs_list(jobs, collection=collection, recreate=recreate)

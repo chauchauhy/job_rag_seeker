@@ -45,6 +45,11 @@ Rules:
 
 
 def _load_raw_jobs() -> list[dict]:
+    from job_seeker.vector_db.ingest import load_jobs_dir
+
+    jobs = load_jobs_dir()
+    if jobs:
+        return jobs
     path = settings.jobsdb_output_file
     if not Path(path).is_file():
         return []

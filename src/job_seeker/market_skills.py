@@ -178,8 +178,20 @@ def load_skill_dict(path: str | Path | None = None) -> dict[str, list[str]]:
 
 
 def load_jobs(path: str | Path | None = None) -> list[dict]:
-    """Load the crawled job postings, empty list when the file is missing."""
-    return load_existing_jobs(Path(path) if path else settings.jobsdb_output_file)
+    """Load job postings, empty list when nothing is found.
+
+    With no explicit ``path``, merges all ``*.json`` files under
+    ``settings.jobs_dir`` (falling back to ``jobsdb_output_file`` when the
+    directory has no files). An explicit ``path`` reads just that file.
+    """
+    if path:
+        return load_existing_jobs(Path(path))
+    from job_seeker.vector_db.ingest import load_jobs_dir
+
+    jobs = load_jobs_dir()
+    if jobs:
+        return jobs
+    return load_existing_jobs(settings.jobsdb_output_file)
 
 
 def normalize_text(text: str) -> str:

@@ -28,6 +28,7 @@ import json
 import platform
 import re
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -51,12 +52,17 @@ from job_seeker.market_skills import (
     candidate_gap,
     extract_skills,
     filter_jobs,
+    load_jobs,
     top_companies,
 )
 from job_seeker.models import ActionableAdvice, ExtractedCV
 from job_seeker.pipeline import evaluate_job_match, load_cv, retrieve_matching_jobs
 from job_seeker.resume import process_resume
-from job_seeker.vector_db.ingest import ingest_jobs_list
+from job_seeker.vector_db.ingest import (
+    ingest_jobs_dir,
+    ingest_jobs_list,
+    validate_jobs_data,
+)
 from job_seeker.vector_db.qdrant import collection_info
 
 st.set_page_config(
@@ -445,6 +451,61 @@ def _render_job_manager() -> None:
             except Exception as exc:
                 st.error(f"Job add failed: {exc}")
 
+    st.divider()
+    st.subheader("Upload Jobs File (JSON)")
+    st.caption(
+        "Upload a jobs file — a JSON list of job objects like the crawler output. "
+        "It is saved under `data/raw/jobs/` and re-embedded into the vector database."
+    )
+    uploaded = st.file_uploader("Jobs file (.json)", type=["json"], key="jobs_file_uploader")
+    mode = st.radio(
+        "Index mode",
+        ["Append", "Rebuild"],
+        horizontal=True,
+        key="jobs_upload_mode",
+    )
+    if mode == "Rebuild":
+        st.caption(
+            "Rebuild recreates the vector collection from **all** files in "
+            "`data/raw/jobs/` (the current index is replaced)."
+        )
+    if st.button(
+        "Upload & re-embed",
+        type="primary",
+        key="jobs_upload_btn",
+        disabled=uploaded is None,
+    ):
+        if uploaded is None:
+            return
+        with st.spinner("Validating, embedding, and upserting…"):
+            try:
+                data = json.loads(uploaded.getvalue().decode("utf-8"))
+                jobs, warnings = validate_jobs_data(data)
+                target = settings.jobs_dir / Path(uploaded.name).name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(
+                    json.dumps(jobs, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                start = time.time()
+                if mode == "Rebuild":
+                    count = ingest_jobs_dir(recreate=True)
+                else:
+                    count = ingest_jobs_list(jobs)
+                elapsed = time.time() - start
+                message = (
+                    f"Saved {len(jobs)} jobs to `{target.name}` and embedded "
+                    f"{count} vectors in {elapsed:.1f}s."
+                )
+                if warnings:
+                    shown = ", ".join(warnings[:5])
+                    more = f" (+{len(warnings) - 5} more)" if len(warnings) > 5 else ""
+                    message += f"\n\nSkipped (no job text): {shown}{more}"
+                _clear_job_cache()
+                st.success(message)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Upload failed: {exc}")
+
 
 def _render_skill_chips(skills: list[dict], color: str, label: str) -> None:
     """Render market skills as tag chips with their job counts."""
@@ -474,7 +535,7 @@ def _render_market_skills(cv: ExtractedCV) -> None:
         "refresh the dictionary without touching code."
     )
 
-    jobs = load_existing_jobs(settings.jobsdb_output_file)
+    jobs = load_jobs()
     if not jobs:
         st.warning(
             "No crawled jobs found. Run `job-seeker crawl` to fetch postings, "

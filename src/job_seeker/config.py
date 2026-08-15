@@ -33,8 +33,12 @@ class Settings:
     )
     jobsdb_target_count: int = int(os.getenv("JOBSDB_TARGET_COUNT", "90"))
     jobsdb_output_file: Path = _resolve(
-        os.getenv("JOBSDB_OUTPUT_FILE", "data/raw/jobsdb_analyst_programmer_jobs.json")
+        os.getenv(
+            "JOBSDB_OUTPUT_FILE",
+            "data/raw/jobs/jobsdb_analyst_programmer_jobs.json",
+        )
     )
+    jobs_dir: Path = _resolve(os.getenv("JOBS_DIR", "data/raw/jobs"))
 
     resume_pdf_path: Path = _resolve(os.getenv("RESUME_PDF_PATH", ""))
     resume_markdown_output: Path = _resolve(

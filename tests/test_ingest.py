@@ -1,9 +1,16 @@
 """Tests for job ingestion into the vector database (vector_db.ingest)."""
 
+import json
+
 import numpy as np
 import pytest
 
-from job_seeker.vector_db.ingest import build_points, ingest_jobs_list
+from job_seeker.vector_db.ingest import (
+    build_points,
+    ingest_jobs_list,
+    load_jobs_dir,
+    validate_jobs_data,
+)
 
 JOB = {
     "job_id": "manual_demo",
@@ -72,3 +79,53 @@ def test_ingest_jobs_list_upserts_without_duplication(monkeypatch, fake_embeddin
     ingest_jobs_list([JOB])
     ids_second = {p.id for p in client.upserted}
     assert ids_second == ids_first, "re-ingesting the same job must overwrite the same point ids"
+
+
+def test_load_jobs_dir_merges_json_files(tmp_path):
+    (tmp_path / "a.json").write_text(
+        json.dumps([{"job_id": "a"}]), encoding="utf-8"
+    )
+    (tmp_path / "b.json").write_text(
+        json.dumps([{"job_id": "b"}, {"job_id": "c"}]), encoding="utf-8"
+    )
+    jobs = load_jobs_dir(tmp_path)
+    assert [j["job_id"] for j in jobs] == ["a", "b", "c"]
+
+
+def test_load_jobs_dir_missing_dir_returns_empty(tmp_path):
+    assert load_jobs_dir(tmp_path / "does-not-exist") == []
+
+
+def test_load_jobs_dir_skips_bad_json(tmp_path):
+    (tmp_path / "ok.json").write_text(json.dumps([{"job_id": "a"}]), encoding="utf-8")
+    (tmp_path / "bad.json").write_text("not json", encoding="utf-8")
+    jobs = load_jobs_dir(tmp_path)
+    assert [j["job_id"] for j in jobs] == ["a"]
+
+
+def test_validate_jobs_data_rejects_non_list():
+    with pytest.raises(ValueError, match="JSON list"):
+        validate_jobs_data({"job_id": "a"})
+
+
+def test_validate_jobs_data_rejects_empty_list():
+    with pytest.raises(ValueError, match="no jobs"):
+        validate_jobs_data([])
+
+
+def test_validate_jobs_data_rejects_non_dict_item():
+    with pytest.raises(ValueError, match="not a JSON object"):
+        validate_jobs_data([{"job_id": "a"}, "oops"])
+
+
+def test_validate_jobs_data_warns_on_empty_jobs():
+    jobs, warnings = validate_jobs_data(
+        [{"job_id": "empty-job"}, {"job_id": "ok-job", "Responsibilities": "- Python"}]
+    )
+    assert [j["job_id"] for j in jobs] == ["ok-job"]
+    assert any("empty-job" in w for w in warnings)
+
+
+def test_validate_jobs_data_rejects_all_empty():
+    with pytest.raises(ValueError, match="job text"):
+        validate_jobs_data([{"job_id": "a"}, {"job_id": "b"}])
