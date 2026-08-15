@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "python-dotenv>=1.0",
     "pydantic>=2.0",
-    "markitdown>=0.1.0",
+    "markitdown[pdf]>=0.1.0",
     "selenium>=4.20",
     "qdrant-client>=1.9",
     "fastembed>=0.3",
