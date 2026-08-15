@@ -16,6 +16,9 @@ from fastembed import (
 )
 
 from job_seeker.config import settings
+from job_seeker.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 __all__ = [
     "get_colbert_embedder",
@@ -30,11 +33,18 @@ __all__ = [
 
 @lru_cache(maxsize=1)
 def get_colbert_embedder() -> LateInteractionTextEmbedding:
+    logger.info(
+        "Loading ColBERT model %s (first load downloads weights)", settings.embedding_model
+    )
     return LateInteractionTextEmbedding(model_name=settings.embedding_model)
 
 
 @lru_cache(maxsize=1)
 def get_sparse_embedder() -> SparseTextEmbedding:
+    logger.info(
+        "Loading sparse (BM25) model %s (first load downloads weights)",
+        settings.sparse_embedding_model,
+    )
     return SparseTextEmbedding(model_name=settings.sparse_embedding_model)
 
 
@@ -73,5 +83,7 @@ def embedding_dim() -> int:
 
 def warm_up() -> None:
     """Pre-load both embedders (first call downloads the models)."""
+    logger.info("Warming up embedding models…")
     embed_colbert_docs(["warmup"])
     embed_sparse(["warmup"])
+    logger.info("Embedding models ready")

@@ -5,10 +5,13 @@ import os
 import re
 import shutil
 import subprocess
-import sys
+import time
 from pathlib import Path
 
 from job_seeker.config import settings
+from job_seeker.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 __all__ = [
     "OPENCODE_TIMEOUT_SECONDS",
@@ -45,9 +48,10 @@ def _run_opencode(
     """
     binary = find_opencode_binary()
     server_url = os.getenv("OPENCODE_SERVER_URL", "").strip()
+    started = time.time()
     if server_url:
         try:
-            return subprocess.run(
+            completed = subprocess.run(
                 [
                     binary,
                     "run",
@@ -65,10 +69,20 @@ def _run_opencode(
                 errors="replace",
                 timeout=timeout,
             )
+            logger.info(
+                "opencode run (attach %s) model=%s rc=%d in %.1fs",
+                server_url,
+                model,
+                completed.returncode,
+                time.time() - started,
+            )
+            return completed
         except (subprocess.SubprocessError, OSError):
-            print(f"[llm] opencode serve unreachable at {server_url}; "
-                  "falling back to direct invocation.", file=sys.stderr)
-    return subprocess.run(
+            logger.warning(
+                "opencode serve unreachable at %s; falling back to direct invocation",
+                server_url,
+            )
+    completed = subprocess.run(
         [binary, "run", "--format", "json", "-m", model],
         input=prompt,
         capture_output=True,
@@ -77,6 +91,13 @@ def _run_opencode(
         errors="replace",
         timeout=timeout,
     )
+    logger.info(
+        "opencode run (direct) model=%s rc=%d in %.1fs",
+        model,
+        completed.returncode,
+        time.time() - started,
+    )
+    return completed
 
 
 def run_llm(prompt: str, model: str | None = None, timeout: int = OPENCODE_TIMEOUT_SECONDS) -> str:

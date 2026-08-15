@@ -102,6 +102,9 @@ HANDLERS = {
 
 
 def main(argv: list[str] | None = None) -> None:
+    from job_seeker.logging_setup import setup_logging
+
+    setup_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

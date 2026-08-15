@@ -15,8 +15,11 @@ import streamlit as st
 
 from job_seeker.config import settings
 from job_seeker.discovery_ui import render_discovery
+from job_seeker.logging_setup import setup_logging
 from job_seeker.vector_db.qdrant import collection_info
 from job_seeker.vector_db.search import search_jobs, search_jobs_expanded
+
+setup_logging()
 
 st.set_page_config(page_title="Job Seeker RAG", page_icon="", layout="wide")
 

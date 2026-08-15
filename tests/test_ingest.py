@@ -129,3 +129,24 @@ def test_validate_jobs_data_warns_on_empty_jobs():
 def test_validate_jobs_data_rejects_all_empty():
     with pytest.raises(ValueError, match="job text"):
         validate_jobs_data([{"job_id": "a"}, {"job_id": "b"}])
+
+
+def test_build_points_reports_embed_progress(fake_embeddings):
+    events = []
+    build_points([JOB, JOB], on_progress=lambda stage, frac, msg: events.append((stage, frac, msg)))
+    assert events, "expected embed progress events"
+    assert all(stage == "embed" for stage, _, _ in events)
+    assert all(0.0 <= frac <= 1.0 for _, frac, _ in events)
+
+
+def test_ingest_jobs_list_reports_upsert_progress(monkeypatch, fake_embeddings):
+    client = _FakeClient()
+    monkeypatch.setattr("job_seeker.vector_db.ingest.get_client", lambda: client)
+    monkeypatch.setattr(
+        "job_seeker.vector_db.ingest.ensure_collection",
+        lambda collection=None, recreate=False: collection or "jobs_collection",
+    )
+    events = []
+    ingest_jobs_list([JOB], on_progress=lambda stage, frac, msg: events.append((stage, frac)))
+    assert ("upsert", 0.0) in events, "expected a final upsert progress event"
+    assert any(stage == "embed" for stage, _ in events)

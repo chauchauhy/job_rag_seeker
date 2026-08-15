@@ -20,7 +20,10 @@ from qdrant_client.models import (
 )
 
 from job_seeker.config import settings
+from job_seeker.logging_setup import get_logger
 from job_seeker.vector_db.embeddings import embedding_dim
+
+logger = get_logger(__name__)
 
 PAYLOAD_INDEX_FIELDS = ("job_id", "company", "working_location", "section")
 
@@ -33,8 +36,14 @@ def get_client() -> QdrantClient:
     if _client is None:
         if settings.qdrant_path:
             settings.qdrant_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.info("Qdrant embedded mode at %s", settings.qdrant_path)
             _client = QdrantClient(path=str(settings.qdrant_path))
         else:
+            logger.info(
+                "Qdrant server mode at %s (timeout=%ss)",
+                settings.qdrant_url,
+                settings.qdrant_timeout,
+            )
             _client = QdrantClient(
                 url=settings.qdrant_url,
                 api_key=settings.qdrant_key or None,

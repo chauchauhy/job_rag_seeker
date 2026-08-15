@@ -46,6 +46,7 @@ from job_seeker.advice import generate_actionable_advice
 from job_seeker.config import RAW_DIR, settings
 from job_seeker.crawler import load_existing_jobs, upsert_jobs
 from job_seeker.discovery_ui import render_discovery
+from job_seeker.logging_setup import setup_logging
 from job_seeker.market_skills import (
     SALARY_BANDS,
     SKILL_DICT_PATH,
@@ -64,6 +65,8 @@ from job_seeker.vector_db.ingest import (
     validate_jobs_data,
 )
 from job_seeker.vector_db.qdrant import collection_info
+
+setup_logging()
 
 st.set_page_config(
     page_title="Job Match Dashboard",
@@ -103,6 +106,35 @@ def _clear_job_cache() -> None:
     for key in list(st.session_state.keys()):
         if key.startswith("report_") or key.startswith("advice_"):
             del st.session_state[key]
+
+
+_PROGRESS_SPANS = {
+    "embed": (0.0, 0.7),
+    "upsert": (0.7, 0.3),
+    "convert": (0.0, 0.5),
+    "extract": (0.5, 0.45),
+    "done": (1.0, 0.0),
+}
+
+
+def _run_with_progress(title: str, fn, done_label: str):
+    """Run a long callable while rendering a live progress bar + caption.
+
+    ``fn`` receives an ``on_progress(stage, fraction, message)`` callback and
+    its return value is returned to the caller.
+    """
+    with st.status(title, expanded=True) as status:
+        bar = st.progress(0.0)
+        label = st.empty()
+
+        def on_progress(stage: str, fraction: float, message: str) -> None:
+            base, span = _PROGRESS_SPANS.get(stage, (0.0, 1.0))
+            bar.progress(min(1.0, base + span * max(0.0, min(fraction, 1.0))))
+            label.caption(message)
+
+        result = fn(on_progress)
+        status.update(label=done_label, state="complete")
+        return result
 
 
 def _new_job_id(company: str, title: str) -> str:
@@ -383,18 +415,23 @@ def _render_cv_manager(cv: ExtractedCV) -> None:
     if uploaded is not None:
         st.caption(f"{uploaded.name} · {len(uploaded.getvalue()) / 1024:.1f} KB")
         if st.button("Save & re-suggest jobs", type="primary", key="cv_save_btn"):
-            with st.spinner("Extracting CV & refreshing suggestions…"):
-                try:
-                    settings.cv_pdf_storage.parent.mkdir(parents=True, exist_ok=True)
-                    settings.cv_pdf_storage.write_bytes(uploaded.getvalue())
-                    extracted = process_resume(settings.cv_pdf_storage)
-                    new_cv = ExtractedCV.model_validate(extracted)
-                    st.session_state["cv"] = new_cv
-                    _clear_job_cache()
-                    st.success(f"CV updated for {new_cv.Candidate_Name}.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"CV update failed: {exc}")
+            try:
+                settings.cv_pdf_storage.parent.mkdir(parents=True, exist_ok=True)
+                settings.cv_pdf_storage.write_bytes(uploaded.getvalue())
+                extracted = _run_with_progress(
+                    "Extracting CV…",
+                    lambda cb: process_resume(
+                        settings.cv_pdf_storage, on_progress=cb
+                    ),
+                    "CV extraction complete.",
+                )
+                new_cv = ExtractedCV.model_validate(extracted)
+                st.session_state["cv"] = new_cv
+                _clear_job_cache()
+                st.success(f"CV updated for {new_cv.Candidate_Name}.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"CV update failed: {exc}")
 
     st.divider()
     st.subheader("Current CV")
@@ -436,20 +473,23 @@ def _render_job_manager() -> None:
             "Responsibilities": responsibilities,
             "Requirements": requirements,
         }
-        with st.spinner("Appending job & re-embedding into Qdrant…"):
-            try:
-                path = settings.jobsdb_output_file
-                path.parent.mkdir(parents=True, exist_ok=True)
-                merged = upsert_jobs(load_existing_jobs(path), [job])
-                path.write_text(
-                    json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
-                count = ingest_jobs_list([job])
-                _clear_job_cache()
-                st.success(f"Job saved & embedded ({count} vectors).")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Job add failed: {exc}")
+        try:
+            path = settings.jobsdb_output_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            merged = upsert_jobs(load_existing_jobs(path), [job])
+            path.write_text(
+                json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            count = _run_with_progress(
+                "Embedding & upserting job…",
+                lambda cb: ingest_jobs_list([job], on_progress=cb),
+                "Job embedded.",
+            )
+            _clear_job_cache()
+            st.success(f"Job saved & embedded ({count} vectors).")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Job add failed: {exc}")
 
     st.divider()
     st.subheader("Upload Jobs File (JSON)")
@@ -477,34 +517,40 @@ def _render_job_manager() -> None:
     ):
         if uploaded is None:
             return
-        with st.spinner("Validating, embedding, and upserting…"):
-            try:
-                data = json.loads(uploaded.getvalue().decode("utf-8"))
-                jobs, warnings = validate_jobs_data(data)
-                target = settings.jobs_dir / Path(uploaded.name).name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(
-                    json.dumps(jobs, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
-                start = time.time()
+        try:
+            data = json.loads(uploaded.getvalue().decode("utf-8"))
+            jobs, warnings = validate_jobs_data(data)
+            target = settings.jobs_dir / Path(uploaded.name).name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                json.dumps(jobs, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            start = time.time()
+
+            def _ingest(cb):
                 if mode == "Rebuild":
-                    count = ingest_jobs_dir(recreate=True)
-                else:
-                    count = ingest_jobs_list(jobs)
-                elapsed = time.time() - start
-                message = (
-                    f"Saved {len(jobs)} jobs to `{target.name}` and embedded "
-                    f"{count} vectors in {elapsed:.1f}s."
-                )
-                if warnings:
-                    shown = ", ".join(warnings[:5])
-                    more = f" (+{len(warnings) - 5} more)" if len(warnings) > 5 else ""
-                    message += f"\n\nSkipped (no job text): {shown}{more}"
-                _clear_job_cache()
-                st.success(message)
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Upload failed: {exc}")
+                    return ingest_jobs_dir(recreate=True, on_progress=cb)
+                return ingest_jobs_list(jobs, on_progress=cb)
+
+            count = _run_with_progress(
+                "Rebuilding vector index…" if mode == "Rebuild" else "Embedding & upserting…",
+                _ingest,
+                "Index updated.",
+            )
+            elapsed = time.time() - start
+            message = (
+                f"Saved {len(jobs)} jobs to `{target.name}` and embedded "
+                f"{count} vectors in {elapsed:.1f}s."
+            )
+            if warnings:
+                shown = ", ".join(warnings[:5])
+                more = f" (+{len(warnings) - 5} more)" if len(warnings) > 5 else ""
+                message += f"\n\nSkipped (no job text): {shown}{more}"
+            _clear_job_cache()
+            st.success(message)
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Upload failed: {exc}")
 
 
 def _render_skill_chips(skills: list[dict], color: str, label: str) -> None:

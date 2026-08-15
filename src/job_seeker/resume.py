@@ -1,12 +1,17 @@
 """Resume processing pipeline: PDF -> markdown -> structured JSON via LLM."""
 
 import json
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from markitdown import MarkItDown
 
 from job_seeker.config import RAW_DIR, RESULTS_DIR, settings
 from job_seeker.llm import extract_json_with_llm
+from job_seeker.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 __all__ = ["EXTRACT_PROMPT", "pdf_to_markdown", "extract_resume", "process_resume", "ensure_dirs"]
 
@@ -61,7 +66,10 @@ def extract_resume(resume_text: str) -> dict:
     return extract_json_with_llm(prompt)
 
 
-def process_resume(pdf_path: str | Path | None = None) -> dict:
+def process_resume(
+    pdf_path: str | Path | None = None,
+    on_progress: Callable[[str, float, str], None] | None = None,
+) -> dict:
     """Convert a resume PDF to markdown, extract structured JSON, and persist both.
 
     Returns the extracted JSON dict.
@@ -70,15 +78,24 @@ def process_resume(pdf_path: str | Path | None = None) -> dict:
     if not Path(pdf_path).is_file():
         raise FileNotFoundError(f"Resume PDF not found: {pdf_path}")
 
+    started = time.time()
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     settings.cv_json_path.parent.mkdir(parents=True, exist_ok=True)
+    if on_progress:
+        on_progress("convert", 0.15, "Converting PDF to markdown…")
     markdown = pdf_to_markdown(pdf_path)
+    logger.info("Converted PDF -> markdown (%d chars) in %.1fs", len(markdown), time.time() - started)
     settings.resume_markdown_output.write_text(markdown, encoding="utf-8")
 
+    if on_progress:
+        on_progress("extract", 0.6, "Extracting structured profile with LLM…")
     extracted = extract_resume(markdown)
+    logger.info("LLM extracted CV in %.1fs", time.time() - started)
     settings.cv_json_path.write_text(
         json.dumps(extracted, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    if on_progress:
+        on_progress("done", 1.0, "CV extraction complete")
     return extracted
 
 
